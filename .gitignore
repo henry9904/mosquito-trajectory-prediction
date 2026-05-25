@@ -1,0 +1,29 @@
+# Data
+open/
+cache/
+
+# Submissions (large)
+submissions/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Models
+*.pt
+*.pth
+*.pkl
+*.joblib
+
+# Misc
+.env
+*.log
