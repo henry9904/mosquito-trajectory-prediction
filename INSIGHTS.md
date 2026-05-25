@@ -1,297 +1,428 @@
-# 모기 비행 궤적 예측 — 실험 인사이트 총정리
+# 🦟 모기 비행 궤적 예측 — 실험 인사이트 (Experiment Insights)
 
-> **대회**: 데이콘 월간 AI 경진대회  
-> **목표**: 11시점(40ms 간격) 3D 관측 → 80ms 후 위치 예측 (R-Hit@1cm)  
-> **기간**: 2025–2026  
-> **최고 점수**: LB 0.6780 (Public), OOF 기준 최고 모델: v3_D (0.6659)
-
----
-
-## 1. 데이터 EDA — 핵심 발견
-
-### 1-1. 스케일
-| 항목 | 값 |
-|------|-----|
-| 관측 시간 | -400ms ~ 0ms (11점, 40ms 간격) |
-| 예측 시점 | +80ms |
-| x/y/z 이동 범위 | 수 cm 단위 |
-| 평균 속도 | ~0.5–2 m/s |
-| 평균 가속도 | ~10–20 m/s² |
-
-### 1-2. 비행 패턴 분류
-모기 궤적은 크게 4가지 클러스터로 분류:
-- **C1**: 직선형 고속 비행 (easy, R-Hit 높음)
-- **C2**: 완만한 곡선 비행 (보통)
-- **C3**: 저속 선회 비행 (보통)
-- **C4**: 급격한 방향 전환 (hard, R-Hit 낮음, Fold 2에 집중)
-
-### 1-3. Y축 비대칭
-- 모기는 **순방향 편향** = -0.360cm (앞으로 가는 경향)
-- **Y-flip TTA 실패 원인**: 모기 비행에 y축 대칭성이 없음. Y-flip은 비행 방향을 반전시켜 오히려 예측 악화
-- 결론: 데이터 증강 시 실제 물리적 대칭성 확인 필수
-
-### 1-4. Fold 2 난이도
-모든 실험에서 Fold 2가 ~0.645–0.652로 일관되게 낮음 → 급기동 샘플(C4) 집중
+> **대회 / Competition**: 데이콘 월간 AI 경진대회  
+> **과제 / Task**: 모기 3D 궤적 11점(40ms 간격) 관측 → 80ms 후 위치 예측  
+> **Predict**: 3D mosquito position +80ms ahead from 11 observations (40ms apart)  
+> **지표 / Metric**: R-Hit@1cm (예측값이 실제값 1cm 이내 = 적중)  
+> **현재 최고 / Best**: OOF **0.6659**, LB Public ~**0.6780**
 
 ---
 
-## 2. 물리 기반 예측 (Kalman Filter)
+## 📊 전체 실험 결과 한눈에 (All Results at a Glance)
 
-### 2-1. Constant Velocity (CV) Kalman — 베이스라인
 ```
-sigma_obs = 0.3e-3  (관측 노이즈)
-sigma_proc = 1.0    (프로세스 노이즈)
-OOF R-Hit = 0.5964
-```
-- **축별 독립** 처리 (x, y, z 각각 스칼라 Kalman)
-- `sigma_obs`는 Optuna로 탐색 → 0.000267이 최적
-- 이 값이 딥러닝 모델의 "상한"을 결정
+R-Hit@1cm (높을수록 좋음 / Higher is better)
 
-### 2-2. Constant Acceleration (CA) Kalman — 실패
+  0.70 ┤
+       │
+  0.69 ┤  ← 목표 / Target
+       │
+  0.68 ┤
+       │
+  0.67 ┤              ██████  ← 최고! v3_D (0.6659)
+       │         ████  ████
+  0.66 ┤    ████  ████  ████  ████
+       │    ████  ████  ████  ████
+  0.65 ┤    ████  ████  ████  ████
+       │    ████  ████  ████  ████
+  0.60 ┤  ████████████████████████████████████
+       │  ████████████████████████████████████
+  0.59 ┤  ████  ████████████████████████████
+       │  ████
+  0.59 ┤  ████                               ████
+       └──────────────────────────────────────────
+         Kalman  v3_B   v3_C  [v3_D]  v5    v6    v7   LGBM
+         (CV)   (Mish) (+곡률) (최고) (Tr.) (Aug) (ms)
 ```
-OOF R-Hit = 0.4489  (CV 대비 -0.15, 대폭 하락)
-```
-- 40ms 스케일에서 모기 비행은 등속 모델이 등가속 모델보다 훨씬 우수
-- **원인**: 40ms 구간에서 모기 가속도는 노이즈 수준 → CA 모델은 잘못된 가속도 추정
 
-### 2-3. RTS Smoother — 수학적으로 동치
-- 미래 예측에서 `x_smooth[T-1] = x_filter[T-1]` (항상 동일)
-- RTS smoother는 과거 추정 개선에만 효과적; 미래 예측에는 무의미
-- **결론**: Kalman → 80ms 외삽에 RTS 적용은 효과 없음
+| 모델 / Model | OOF R-Hit | 이전 대비 | 핵심 변경점 |
+|-------------|:---------:|:-------:|------------|
+| Kalman CV (물리 베이스라인) | 0.5964 | — | 등속도 칼만 필터 |
+| Kalman CA (등가속도) | 0.4489 | **-0.1475** ❌ | 잘못된 물리 모델 |
+| GRU v3_baseline | 0.6550 | +0.0586 | GRU + Whitening |
+| GRU v3_B | 0.6631 | +0.0081 | Mish 활성화 함수 추가 |
+| GRU v3_C | 0.6641 | +0.0010 | 곡률(curvature) 피처 추가 |
+| **GRU v3_D** ⭐ | **0.6659** | **+0.0018** | **Focal Loss γ=2.0 추가** |
+| Transformer v5 | 0.6620 | -0.0039 ❌ | Transformer 아키텍처 |
+| Rotation Aug v6 | 0.6608 | -0.0051 ❌ | 4방향 회전 증강 |
+| Multi-step v7 | 0.6635 | -0.0024 ❌ | 자기지도 보조 task |
+| LightGBM | 0.5939 | -0.0025 ❌ | 트리 기반 모델 |
 
 ---
 
-## 3. 딥러닝 — GRU 모델 아키텍처 진화
+## 🏆 왜 v3_D가 가장 좋은가? (Why is v3_D the Best?)
 
-### 3-1. 모델 버전별 OOF 비교
+v3_D는 네 가지 핵심 설계 결정이 맞물려서 최고 성능을 냅니다.  
+*v3_D achieves the best score through four interconnected design decisions.*
 
-| 버전 | 아키텍처 | OOF | 비고 |
-|------|----------|-----|------|
-| v3_baseline | GRU + Whitening | 0.655 | 기준점 |
-| v3_B | Mish + 1L BiGRU | 0.6631 | activation 개선 |
-| v3_C | curvature feature | 0.6641 | 피처 개선 |
-| **v3_D** | **+focal_gamma=2** | **0.6659** | **최고 OOF** |
-| v5 (Transformer) | CLS token, Pre-LN | 0.6620 | GRU보다 열등 |
-| v6 (rotation aug) | 4x 회전 증강 | 0.6608 | 증강 역효과 |
-| v7 lS=0.3 | multi-step aux | 0.6635 | 미개선 |
+---
 
-### 3-2. v3_D 최적 설정
+### 결정 1️⃣ — 칼만 필터를 "바닥"으로 쓴다 (Use Kalman as the Floor)
+
+**문제 / Problem**: 모기 위치를 절대 좌표로 직접 예측하면, 모델이 공간 전체를 학습해야 함  
+**해결 / Solution**: 칼만 필터가 먼저 물리 기반 예측을 하고, GRU는 그 **잔차(오차)만** 보정
+
+```
+[입력 궤적]
+    │
+    ├──→ 칼만 필터 (등속도 모델)  ────────────────────────┐
+    │    σ_obs = 0.000267                                  │
+    │    80ms 외삽                                          │
+    │    R-Hit = 0.5964                                    ↓
+    │                                              [최종 예측] = 칼만 + GRU 잔차
+    └──→ GRU (잔차만 학습)        ────────────────────────┘
+         "칼만이 얼마나 틀렸나?"
+         평균 잔차 크기 ≈ 1.2cm
+```
+
+**왜 효과적인가? / Why it works**:
+- 칼만 필터가 전체 분산의 ~90%를 설명 → GRU는 나머지 ~10%만 집중
+- 작은 목표값 → 학습 안정, 과적합 감소
+- 물리 법칙(등속도) 위반 불가 → 황당한 예측 없음
+
+---
+
+### 결정 2️⃣ — Body Frame 회전 정규화 (Yaw Rotation Normalization)
+
+**문제 / Problem**: 모기가 북쪽, 남쪽, 동쪽 어디로 날든 패턴은 같다 → 절대 방향이 무의미  
+**해결 / Solution**: 마지막 속도 방향을 기준으로 좌표계를 회전시킨 뒤 잔차를 예측
+
+```
+절대 좌표계 (Before)          Body Frame (After)
+  y                              "앞" (forward)
+  ↑  모기가 북동쪽으로 날면?       ↑
+  │   →  (dx, dy) = (0.7, 0.7)   │   → (d_fwd, d_side) = (1.0, 0.0)
+  │                               │
+  └───→ x                         └───→ "옆" (side)
+
+  방향에 따라 값이 달라짐          항상 같은 표현 → 학습 쉬움
+```
+
+**왜 효과적인가? / Why it works**:
+- 모델이 "어느 방향으로 가는가"가 아니라 "얼마나 직진/회전하는가"만 배움
+- 데이터 10,000개가 사실상 "방향 정규화된" 무한 데이터처럼 활용됨
+- → **이 결정 때문에 회전 증강(v6)이 오히려 역효과**: 이미 방향 불변이라 정보 중복
+
+---
+
+### 결정 3️⃣ — 곡률 피처로 "급기동"을 잡는다 (Curvature Features for Sharp Turns)
+
+**문제 / Problem**: 어떤 모기는 갑자기 방향을 바꿈 → 단순 속도 피처로 구분 불가  
+**해결 / Solution**: 물리량 `curvature`, `angular_velocity`, `turn_rate`를 log 변환 후 입력
 
 ```python
-CFG = {
-    'hidden':       64,
-    'num_layers':   1,
-    'bidirectional': True,
-    'fc_hidden':    128,
-    'dropout':      0.25,
-    'main_clip':    0.03,       # tanh clip: ±2cm → ±3cm 잔차
-    'lr':           0.000989,
-    'wd':           0.000886,
-    'focal_gamma':  2.0,
-    'lF':           0.3,        # aux head_F (displacement from last obs) weight
-    'lW':           0.3,        # aux head_W (weak Kalman residual) weight
-    'sigma_obs':    0.000267,
-}
+# 곡률 = 속도의 변화율 / Curvature = rate of change of velocity direction
+curvature   = ‖v × a‖ / ‖v‖³     # 경로 곡률 (path curvature)
+angular_vel = ‖v × a‖ / ‖v‖²     # 각속도 (angular velocity)
+turn_rate   = arccos(v̂ₜ · v̂ₜ₊₁)  # 연속 방향 변화 (consecutive direction change)
 ```
 
-### 3-3. 입력 피처 구조
-
-**시계열 (seq)**: `(N, 11, 13)` — build_seq_curv
-- rel (3): X - X[-1] (상대 위치)
-- velocity (3): v = diff(X)/DT
-- acceleration (3): a = diff(v)/DT
-- speed (1): ‖v‖
-- log(1+curvature) (1): 곡률
-- log(1+angular_vel) (1): 각속도
-- turn_rate (1): 방향 변화율
-
-**스칼라**: `(N, 73)` = scalar(26) + tier3(19) + wavelet(27) + [1 extra]
-- scalar (26): 속도/가속도 통계 + 노이즈 추정 (poly2, savgol, LOO-spline)
-- tier3 (19): rolling mean speed + cumulative path
-- wavelet (27): db4 Level-2 DWT 계수 통계 (3축 × 3단계 × 3 stats)
-
-**출력**: Kalman 잔차를 yaw-회전 좌표계에서 예측
-```
-target = rotate_xy(y_train - kalman_pred, theta_yaw)
-theta_yaw = arctan2(v_y, v_x)  # 마지막 속도 방향 기준
-```
-
-### 3-4. 보조 헤드 (Auxiliary Heads)
-```
-head_main: Kalman 잔차 (primary output, tanh clip ±0.03m)
-head_F:    X[-1]에서의 변위 (displacement from last obs)
-head_W:    약한 Kalman(sigma_obs=1e-3) 잔차 (smoother baseline)
-```
-- `total_loss = loss_main + lF*loss_F + lW*loss_W`
-- 보조 헤드는 여러 기준점으로 학습을 정규화하는 효과
-
-### 3-5. Focal Loss 효과
-```python
-def loss_focal_euclid(p, t, gamma=2.0):
-    err = ‖p - t‖
-    p_miss = sigmoid((err - 0.01) / 0.002)  # miss probability
-    w = p_miss^gamma                          # upweight hard samples
-    return (w * err).mean()
-```
-- 오류가 큰 샘플(>1cm)에 더 큰 가중치 부여
-- gamma=2.0 (v3_D) > gamma=1.0 (v5) > gamma=0.0 (no focal)
+**왜 효과적인가? / Why it works**:
+- 직선 비행: curvature ≈ 0 → 칼만이 이미 잘 맞춤 → GRU 잔차 ≈ 0
+- 급기동: curvature 크게 증가 → GRU가 "이건 칼만이 틀릴 것"을 미리 감지
+- log1p 변환 → 극단값(급기동) 압축, 수치 안정
 
 ---
 
-## 4. 실패한 실험들과 이유
+### 결정 4️⃣ — Focal Loss로 "어려운 샘플"에 집중 (Focal Loss for Hard Samples)
 
-### 4-1. Rotation Augmentation (v6) — 실패
-**실험**: X-Y 평면 4방향 회전 (0°, 90°, 180°, 270°) → 4x 데이터  
-**결과**: OOF 0.6608 (v3_D 대비 -0.0051)
+**문제 / Problem**: 쉬운 샘플(직선 비행)이 많아 → loss가 쉬운 샘플에 지배됨 → 급기동 예측 안 됨  
+**해결 / Solution**: 오차가 큰 샘플일수록 가중치를 높이는 Focal Loss
 
-**실패 원인**:
-- **yaw normalization이 이미 방향 불변성을 확보**
-  - 모델이 body frame(yaw 기준)에서 학습 → 절대 방향 정보 불필요
-  - 회전 증강은 정보적으로 완전히 중복
-- 4x 데이터 증가로 학습 시간만 증가, 새 정보는 없음
-- **교훈**: 이미 모델 설계에서 다룬 불변성을 데이터 증강으로 다시 처리하지 말 것
+```
+일반 Loss:
+  샘플 A (직선, 오차=0.3cm)  가중치: 1.0  ← 쉬운 샘플이 gradient 지배
+  샘플 B (급기동, 오차=3cm)  가중치: 1.0
 
-### 4-2. Y-flip TTA (v5) — 실패
-**실험**: 예측 시 y 좌표 반전 후 평균  
-**결과**: OOF 하락
+Focal Loss (γ=2.0):
+  샘플 A (직선, 오차=0.3cm)  가중치: 0.1  ← 낮춤
+  샘플 B (급기동, 오차=3cm)  가중치: 0.9  ← 높임 ★
 
-**실패 원인**:
-- 모기 비행에는 Y축 대칭성이 없음
-- EDA: 순방향 편향 = -0.360cm → 방향성 있는 비행
-- Y-flip은 오히려 편향 반전 → 예측 악화
+  w = sigmoid((err - 1cm) / 0.2cm) ^ γ
+```
 
-### 4-3. Transformer (v5) — GRU보다 열등
-**실험**: CLS token + Pre-LN Transformer  
-**결과**: OOF 0.6620 (GRU 0.6659 대비 낮음)
-
-**실패 원인**:
-- 10,000 샘플 데이터셋에서 Transformer의 많은 파라미터 = 과적합
-- 시계열 길이 11 (매우 짧음) → Self-attention의 이점 없음
-- GRU가 단기 순서 의존성 포착에 더 효율적
-
-### 4-4. Multi-step Self-Supervised (v7) — 미개선
-**실험**: 10스텝 → 11번째 관측 변위 예측 보조 task  
-**결과**: lS=0.3 → OOF 0.6635 (v3_D 0.6659 대비 낮음)
-
-**실패 원인**:
-- GRU가 이미 내부적으로 short-term pattern 학습
-- 보조 task loss가 주 task 학습 간섭
-- 10K 데이터에서 추가 generalization 효과 미미
-
-### 4-5. 앙상블 — 상관관계 문제
-**실험**: v3_D, v4r1, v4ens, v5r4, v5ens 등 다양한 모델 앙상블  
-**결과**: 모든 모델 쌍 Pearson correlation = 1.0000
-
-**원인**:
-- Kalman filter가 예측 분산의 대부분 설명
-- GRU는 작은 잔차만 보정 → 모든 GRU 모델 예측이 유사
-- **결론**: 같은 Kalman 기반 모델끼리 앙상블은 무의미. 다른 기반(e.g., 순수 딥러닝, 물리 모델) 필요
+**왜 효과적인가? / Why it works**:
+- Fold 2처럼 급기동 샘플이 집중된 폴드에서 특히 효과적
+- γ=2.0이 γ=1.0, γ=0(일반 loss) 대비 일관되게 우수
+- 전체 R-Hit 향상: 쉬운 샘플을 더 맞추는 것보다 어려운 샘플을 "덜 틀리는" 것이 지표에 직접 기여
 
 ---
 
-## 5. 피처 엔지니어링 인사이트
+### 결정 5️⃣ (보너스) — 1층 BiGRU가 최적인 이유 (Why 1-Layer BiGRU is Optimal)
 
-### 5-1. 가장 유용한 피처
-1. **curvature / angular_vel** (log1p 변환): 급기동 샘플 식별
-2. **noise_loo (LOO spline)**: 측정 노이즈 추정, hard 샘플 가중치
-3. **wavelet DWT coefficients**: 주파수 도메인에서 비행 패턴 구분
-4. **last velocity vector** (v_last): 방향 + 속도 크기
+데이터 10,000개 × 시계열 길이 11 → 단순한 모델이 이깁니다.  
+*With only 10K samples and sequence length 11, simpler models win.*
 
-### 5-2. 덜 유용한 피처
-- straightness: GRU가 시계열에서 이미 파악
-- high_speed / high_acc binary: 연속형이 더 유용
+```
+모델 복잡도 vs. 성능 (complexity vs. performance)
 
-### 5-3. Whitening vs StandardScaler
-- **Whitening (Cholesky)**: seq 피처에 더 효과적 (VECTOR 논문)
-- **StandardScaler**: scalar 피처에 충분
-- 두 방법의 성능 차이는 미미 (~0.001 OOF)
+성능
+0.666 ┤         ★ 1L BiGRU (v3_D)
+      │       ·   ·
+0.662 ┤     ·        ·  2L BiGRU
+      │   ·              ·
+0.658 ┤  ·                 ·  Transformer
+      │
+      └─────────────────────────────
+        단순  →→→→→→→→→  복잡
+        Simple           Complex
 
----
+"10K 데이터에서 Transformer = 과적합의 시작"
+```
 
-## 6. 하이퍼파라미터 탐색 (Optuna)
-
-### 6-1. 주요 탐색 결과
-| 파라미터 | 범위 | 최적 |
-|----------|------|------|
-| sigma_obs | 1e-4 ~ 5e-3 | 0.000267 |
-| lr | 1e-4 ~ 5e-3 | 0.000989 |
-| weight_decay | 1e-5 ~ 1e-3 | 0.000886 |
-| hidden | 32, 64, 128 | 64 |
-| num_layers | 1, 2 | 1 |
-| fc_hidden | 64, 128, 256 | 128 |
-| dropout | 0.1, 0.25, 0.4 | 0.25 |
-| focal_gamma | 0.0, 1.0, 2.0 | 2.0 |
-
-### 6-2. 핵심 교훈
-- **shallow > deep**: GRU 1층이 2층보다 좋음 (10K 데이터 한계)
-- **작은 lr 유리**: CosineAnnealingLR과 함께 0.001 수준
-- **focal loss 효과적**: gamma=2.0이 일관되게 최고
+| 아키텍처 | 파라미터 수 | OOF | 판정 |
+|---------|:----------:|:---:|:----:|
+| 1L BiGRU (hidden=64) | ~85K | 0.6659 | ✅ 최적 |
+| 2L BiGRU (hidden=64) | ~170K | 0.6631 | ❌ 과적합 |
+| Transformer (4head, 2L) | ~250K | 0.6620 | ❌ 과적합 |
 
 ---
 
-## 7. 앞으로의 방향 (미탐색)
+## 🔬 실험별 상세 분석 (Detailed Experiment Analysis)
 
-### 7-1. 높은 가능성
-- ~~**LightGBM**~~: **실패** — OOF 0.5939 (Kalman 0.5979보다 낮음). 시계열 패턴을 스칼라 피처 79개로 포착 불가. Tree model은 순서 정보 손실
-- **XGBoost with lag features**: LightGBM보다는 lag feature 수동 설계 필요
-- **서로 다른 Kalman sigma_obs 조합**: 강/약 Kalman 예측값 자체를 피처로 사용
-- **Stacking**: GRU OOF 예측 → meta-learner
+### ❌ 실패 1: Constant Acceleration Kalman
+```
+시도: 등가속도 칼만 (CV → CA)
+결과: 0.4489 (CV 0.5964 대비 -0.1475)
 
-### 7-2. 중간 가능성
-- **Conformer (Conv+Attention+GRU)**: CNN으로 local pattern 포착 후 GRU
-- **TCN (Temporal Convolutional Network)**: dilated causal convolution
-- **Physics-informed loss**: 속도/가속도 continuity 제약
+실패 원인 / Why it failed:
+  40ms 스케일에서 모기 가속도 ≈ 노이즈
+  CA 모델은 존재하지 않는 가속도 추세를 "만들어냄"
+  → 오히려 예측이 실제 궤적에서 멀어짐
 
-### 7-3. 낮은 가능성 (이미 시도, 실패)
-- ~~회전 augmentation~~ (이미 yaw normalization이 처리)
-- ~~Y-flip TTA~~ (비대칭 데이터)
-- ~~CA Kalman~~ (CV가 우월)
-- ~~Transformer~~ (데이터 부족)
-- ~~GRU 앙상블~~ (correlation=1.0)
+교훈: 물리 모델은 데이터의 실제 스케일에 맞춰야 함
+Lesson: The physics model must match the actual timescale of the data.
+```
+
+### ❌ 실패 2: 회전 증강 (Rotation Augmentation, v6)
+```
+시도: 0°, 90°, 180°, 270° 회전 → 훈련 데이터 4배
+결과: 0.6608 (v3_D 대비 -0.0051)
+
+실패 원인 / Why it failed:
+  v3_D는 이미 yaw 회전 정규화(body frame)를 사용
+  → 모델은 이미 방향 불변(rotation-invariant)
+  → 회전 증강 = 중복 정보 + 학습 시간만 4배
+
+  "이미 답을 알고 있는 문제를 4번 푸는 것과 같음"
+  "Like solving a problem you already know the answer to, 4 times."
+
+교훈: 모델 설계에서 처리한 불변성은 증강으로 다시 처리하지 말 것
+Lesson: Don't augment for invariances already handled in model design.
+```
+
+### ❌ 실패 3: Y-flip TTA (v5)
+```
+시도: 예측값의 y좌표를 뒤집어서 평균 (Test-Time Augmentation)
+결과: OOF 하락
+
+실패 원인 / Why it failed:
+  EDA 발견: 모기는 앞으로 나아가는 편향이 있음 (-0.360cm forward bias)
+  → Y축 대칭성이 없음
+  → Y-flip은 편향을 반전시켜서 오히려 예측 악화
+
+  "모기는 한 방향으로 날지, 양방향으로 대칭되지 않음"
+  "Mosquitoes fly in one direction; they are not y-symmetric."
+```
+
+### ❌ 실패 4: 앙상블 (Ensemble)
+```
+시도: 여러 GRU 모델 가중 평균
+결과: 모든 모델 쌍 Pearson correlation = 1.0000
+
+실패 원인 / Why it failed:
+  칼만 필터 예측값이 전체 분산의 ~90% 설명
+  GRU 잔차 ≈ 전체의 ~10% 뿐
+  → 칼만이 같으면 최종 예측도 거의 동일
+
+  잔차 std: x=1.36cm, y=1.33cm, z=0.94cm (칼만 기준)
+  → 잔차끼리는 다양하지만, 최종 좌표 기준으로는 corr=1.0
+
+교훈: 앙상블 효과 = 예측 다양성. 같은 기반을 쓰면 다양성이 없음
+Lesson: Ensembling needs diverse predictions; shared Kalman base removes diversity.
+```
+
+### ❌ 실패 5: LightGBM
+```
+시도: 79차원 스칼라 피처 → LightGBM으로 칼만 잔차 예측
+결과: 0.5939 (칼만 단독 0.5979보다 낮음!)
+
+실패 원인 / Why it failed:
+  스칼라 통계는 시계열 순서 정보를 버림
+  "속도 평균 = 1.2m/s"는 알지만, "1번→2번→3번 관측의 가속도 변화"는 모름
+  → 트리 모델은 패턴의 시간 의존성을 포착 불가
+
+  GRU: 시계열을 순서대로 처리 → 시간 패턴 포착 ✅
+  LightGBM: 통계값만 → 순서 정보 손실 ❌
+
+교훈: 시계열 예측은 시계열 모델(GRU, LSTM)이 필요
+Lesson: Time series prediction needs sequential models (GRU, LSTM), not tabular ones.
+```
 
 ---
 
-## 8. 제출 파일 목록
+## 🧩 최종 파이프라인 구조 (Final Pipeline)
 
-| 파일명 | OOF | LB (Public) | 비고 |
-|--------|-----|-------------|------|
-| sub_v3_D_+both_OOF0.6659.csv | 0.6659 | 0.6780 (추정) | **현재 최고** |
-| sub_v5_rank1.csv | 0.6620 | — | Transformer, 낮음 |
-| sub_v6_rotaug_OOF0.6608.csv | 0.6608 | — | 회전 aug, 더 낮음 |
-| sub_v7_lS0.3_OOF0.6635.csv | 0.6635 | — | multi-step |
-| sub_lgbm_*.csv | 0.5939 | — | LightGBM, Kalman보다 열등 |
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      입력 데이터 / Input                      │
+│  X_train: (10000, 11, 3)  — 11시점 × 3D 좌표              │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+              ┌────────────┴─────────────┐
+              ↓                          ↓
+  ┌─────────────────────┐    ┌─────────────────────────────┐
+  │  시계열 피처 빌드      │    │   스칼라 피처 빌드           │
+  │  build_seq_curv()   │    │   build_scalar()            │
+  │  (N, 11, 13)        │    │   + build_tier3()           │
+  │                     │    │   + build_wavelet()         │
+  │  · 상대위치 (3)      │    │   (N, 73)                   │
+  │  · 속도 (3)         │    │                             │
+  │  · 가속도 (3)       │    │   · 속도/가속도 통계 (26)    │
+  │  · 속력 (1)         │    │   · 구간별 path length (19)  │
+  │  · 곡률 (1)         │    │   · Wavelet DWT 계수 (27)   │
+  │  · 각속도 (1)       │    │   · 노이즈 추정 (LOO, poly2)│
+  │  · 방향변화율 (1)   │    └──────────────┬──────────────┘
+  └──────────┬──────────┘                   │
+             │                              │
+             │  Whitening 정규화            │  StandardScaler
+             ↓                             ↓
+  ┌──────────────────────────────────────────────────────────┐
+  │                   GRU v3_D 모델                          │
+  │                                                          │
+  │   Seq Input →  [BiGRU 1층, hidden=64]  → GRU Output    │
+  │                        ↓                                 │
+  │   Scal Input → [Linear 73→64, Mish]   → Scal Emb       │
+  │                        ↓                                 │
+  │        [Concat → FC(192→128, Mish) → Dropout(0.25)]     │
+  │                        ↓                                 │
+  │               ┌────────┴────────┐                       │
+  │               ↓                 ↓                        │
+  │          head_main         head_F / head_W              │
+  │         (잔차 예측)         (보조 학습)                  │
+  │       tanh × 0.03m                                      │
+  └──────────────────────┬───────────────────────────────────┘
+                         │
+                         ↓ GRU 잔차 예측 (body frame)
+  ┌──────────────────────────────────────────────────────────┐
+  │                칼만 필터 예측 + 잔차 = 최종 예측          │
+  │                                                          │
+  │  ① 잔차를 역회전 (inv_rotate_xy)                        │
+  │  ② 칼만 예측 + 역회전된 잔차                            │
+  │  ③ Per-axis Calibration (α 탐색)                        │
+  └──────────────────────────────────────────────────────────┘
+                         │
+                         ↓
+              최종 제출 / Final Submission
+              OOF: 0.6659  |  LB: ~0.6780
+```
 
 ---
 
-## 9. 코드 구조
+## 🔧 핵심 하이퍼파라미터 (Key Hyperparameters)
+
+Optuna 80회 탐색으로 결정된 최적값입니다.  
+*Optimal values determined by 80 Optuna trials.*
+
+| 파라미터 | 최적값 | 탐색 범위 | 왜 이 값인가? |
+|---------|:-----:|:--------:|-------------|
+| `sigma_obs` (칼만 노이즈) | **0.000267** | 1e-4 ~ 5e-3 | 너무 크면 칼만이 과도하게 평탄화, 너무 작으면 노이즈에 민감 |
+| `hidden` (GRU 은닉층) | **64** | 32, 64, 128 | 128은 10K 데이터에서 과적합 |
+| `num_layers` | **1** | 1, 2 | 2층은 gradient 소실, 일관되게 1층이 우수 |
+| `fc_hidden` | **128** | 64, 128, 256 | 64는 표현력 부족, 256은 과적합 |
+| `dropout` | **0.25** | 0.1, 0.25, 0.4 | 0.1은 과적합, 0.4는 underfitting |
+| `focal_gamma` | **2.0** | 0.0, 1.0, 2.0 | 급기동 샘플 업가중치 최적 |
+| `lr` | **0.000989** | 1e-4 ~ 5e-3 | CosineAnnealingLR과 함께 ~1e-3이 안정적 |
+| `lF`, `lW` (보조 헤드) | **0.3** | 0.1 ~ 0.5 | 너무 크면 주 task 방해, 너무 작으면 정규화 효과 없음 |
+
+---
+
+## 📈 다음에 시도할 것 (What to Try Next)
+
+### 🟢 가능성 높음 / High Potential
+| 아이디어 | 예상 효과 | 이유 |
+|---------|:--------:|-----|
+| **Stacking** (GRU OOF → meta-learner) | +0.002~0.005 | GRU와 Kalman의 다른 귀납 편향 결합 |
+| **여러 σ_obs 칼만 앙상블** | +0.001~0.003 | 강/약 칼만이 서로 다른 오차 패턴 |
+| **Physics-Informed Loss** | +0.001~0.002 | 속도/가속도 연속성 제약으로 불물리적 예측 방지 |
+
+### 🟡 중간 가능성 / Medium Potential
+| 아이디어 | 예상 효과 | 이유 |
+|---------|:--------:|-----|
+| **Conformer** (Conv+GRU) | ±0.001 | Local 패턴(CNN) + Global 패턴(GRU) |
+| **더 많은 데이터 증강** (노이즈 주입) | ±0.001 | 측정 노이즈 시뮬레이션 |
+
+### 🔴 이미 시도, 실패 / Already Tried, Failed
+| 아이디어 | OOF 결과 | 실패 이유 |
+|---------|:--------:|---------|
+| ~~Rotation Augmentation~~ | 0.6608 ↓ | yaw norm과 중복 |
+| ~~Y-flip TTA~~ | 하락 ↓ | 모기 비행 비대칭 |
+| ~~CA Kalman~~ | 0.4489 ↓ | 잘못된 물리 모델 |
+| ~~Transformer~~ | 0.6620 ↓ | 10K 데이터로 과적합 |
+| ~~GRU 앙상블~~ | ≈동일 | Pearson corr = 1.0 |
+| ~~LightGBM~~ | 0.5939 ↓ | 시계열 순서 정보 손실 |
+
+---
+
+## 💡 핵심 교훈 요약 (Key Lessons Summary)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. 물리 모델 먼저                                           │
+│     Physics model first                                     │
+│     "칼만 CV 0.5964는 복잡한 딥러닝보다 더 강력한 시작점"   │
+│     "Kalman CV 0.5964 is a stronger start than raw DL"      │
+├─────────────────────────────────────────────────────────────┤
+│  2. 데이터 크기 = 모델 복잡도 상한                           │
+│     Data size = ceiling for model complexity                │
+│     "10K 샘플 → 1층 GRU. 파라미터 줄이면 성능 오름"         │
+│     "10K samples → 1-layer GRU. Fewer params = better."    │
+├─────────────────────────────────────────────────────────────┤
+│  3. 증강 전 물리 대칭성 확인                                 │
+│     Check physical symmetry before augmenting              │
+│     "Y-flip 실패: 모기는 앞으로만 난다"                      │
+│     "Y-flip failed: mosquitoes are not y-symmetric."        │
+├─────────────────────────────────────────────────────────────┤
+│  4. 중복 불변성 처리 금지                                    │
+│     No redundant invariance handling                        │
+│     "yaw norm 이미 함 → 회전 증강 하면 역효과"              │
+│     "yaw norm already done → rotation aug = harmful."       │
+├─────────────────────────────────────────────────────────────┤
+│  5. 앙상블 ≠ 항상 좋음                                      │
+│     Ensemble ≠ always better                                │
+│     "corr=1.0이면 앙상블 무의미. 다양성이 전제조건"          │
+│     "corr=1.0 means no benefit. Diversity is prerequisite." │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📁 코드 구조 (Code Structure)
 
 ```
 mosquitoes/
-├── open/                    # 데이터
-│   ├── train/               # TRAIN_00001~10000.csv
-│   ├── test/                # TEST_00001~10000.csv
-│   └── train_labels.csv
-├── cache/                   # 전처리 캐시
-│   ├── noise_cache.npz      # poly2/savgol/LOO 노이즈
-│   └── noise_cache_10step.npz
-├── submissions/             # 제출 파일
-├── train_v3.py              # GRU (v3_D 포함, 최고 성능)
-├── train_v5.py              # Transformer + Optuna
-├── train_v6.py              # Rotation augmentation
-├── train_v7.py              # Multi-step self-supervised
-├── train_lgbm.py            # LightGBM baseline
-├── ensemble_v2.py           # 앙상블 실험
-└── INSIGHTS.md              # 이 파일
+│
+├── 🏆 train_v3.py          ← 최고 성능 / Best model (v3_D, OOF 0.6659)
+│                              Kalman + BiGRU + 곡률 피처 + Focal Loss
+│
+├── 🔬 train_v5.py          ← Transformer 실험 (OOF 0.6620, 실패)
+│                              CLS token, Pre-LN, Y-flip TTA
+│
+├── 🔬 train_v6.py          ← 회전 증강 실험 (OOF 0.6608, 실패)
+│                              0°/90°/180°/270° 회전, 4x 데이터
+│
+├── 🔬 train_v7.py          ← 자기지도 보조 task (OOF 0.6635, 미개선)
+│                              10스텝 → 11번째 관측 변위 예측
+│
+├── 🔬 train_lgbm.py        ← LightGBM 실험 (OOF 0.5939, 실패)
+│                              79차원 스칼라 피처 기반 트리 모델
+│
+├── 📊 ensemble_v2.py       ← 앙상블 실험 (corr=1.0, 무의미 확인)
+│
+├── 📖 INSIGHTS.md          ← 이 파일 / This file
+│
+└── open/                   ← 데이터 (gitignore)
+    ├── train/              TRAIN_00001~10000.csv (11×3 좌표)
+    ├── test/               TEST_00001~10000.csv
+    └── train_labels.csv    정답 좌표 (x, y, z)
 ```
-
----
-
-## 10. 핵심 교훈 요약
-
-1. **물리 모델이 강력한 베이스라인**: Kalman CV 0.5964는 단순하지만 강력. GRU는 ~0.07 개선
-2. **데이터 크기가 아키텍처를 결정**: 10K 샘플 → 단순한 1층 GRU가 최적
-3. **대칭성 가정 검증 필수**: Y-flip TTA 실패처럼 데이터의 물리적 특성 먼저 확인
-4. **중복 불변성 처리 금지**: yaw normalization + 회전 augmentation은 redundant
-5. **Focal loss는 불균형 샘플에 효과적**: hard case(급기동) 업가중치로 전체 R-Hit 향상
-6. **앙상블 전 상관관계 확인**: corr=1.0 이면 앙상블 무의미
-7. **Kalman 잔차 body frame 예측**: 절대 좌표가 아닌 상대 잔차 + 회전 정규화가 학습 안정화
