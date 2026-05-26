@@ -106,7 +106,6 @@ high_curv = curvature >= median_curvature  # 급기동
 
 ```python
 def physics_loss(pred, last_vel, dt=0.08):
-    # 물리적으로 가능한 범위: 마지막 속도 × dt ± 최대 가속도 × dt²
     expected = last_pos + last_vel * dt
     physics_penalty = F.mse_loss(pred, expected) * 0.1
     return main_loss + physics_penalty
@@ -126,3 +125,22 @@ def physics_loss(pred, last_vel, dt=0.08):
 - `open/` 데이터 디렉토리는 gitignore — 절대 커밋하지 말 것
 - 새 모델은 `train_v8.py`, `train_v9.py` 식으로 버전 관리
 - 기존 `train_v3.py` (최고 모델) 수정 금지 — 새 파일로 실험
+
+---
+
+## AI Agent Mistakes Log
+
+이 섹션은 AI 에이전트가 이 레포에서 실수한 내용을 기록합니다.
+실험 중 잘못된 방향으로 갔거나, 예상과 다른 결과가 나온 경우 여기에 추가하세요.
+다음 에이전트가 같은 실수를 반복하지 않도록 하는 것이 목적입니다.
+
+형식:
+```
+### YYYY-MM-DD — Agent: [이름]
+**실수**: 무슨 일이 있었는지
+**영향**: OOF/LB 결과 또는 낭비된 시간
+**수정**: 어떻게 고쳤는지 (또는 그냥 포기했는지)
+**교훈**: 다음에 뭘 확인해야 하는지
+```
+
+_(아직 기록 없음 — 실수 발생 시 추가할 것)_
