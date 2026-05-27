@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk '{print $1, $2, $11}')",
+      "Bash(\"C:\\\\Users\\\\hyeon\\\\miniconda3\\\\envs\\\\mosquito\\\\python.exe\" check_optuna.py)"
+    ]
+  }
+}

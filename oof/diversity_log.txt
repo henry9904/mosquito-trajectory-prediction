@@ -1,0 +1,18 @@
+=== OOF R-Hit ===
+  s1: 0.6468
+  s2: 0.6626
+  s3: 0.6598
+  s4: 0.6579
+  s5: 0.6448
+
+=== Pairwise Pearson Correlation ===
+  s1 vs s2: 0.99999 [Warning: highly correlated]
+  s1 vs s3: 0.99998 [Warning: highly correlated]
+  s1 vs s4: 0.99998 [Warning: highly correlated]
+  s1 vs s5: 0.99996 [Warning: highly correlated]
+  s2 vs s3: 1.00000 [Warning: highly correlated]
+  s2 vs s4: 0.99999 [Warning: highly correlated]
+  s2 vs s5: 0.99998 [Warning: highly correlated]
+  s3 vs s4: 1.00000 [Warning: highly correlated]
+  s3 vs s5: 0.99999 [Warning: highly correlated]
+  s4 vs s5: 0.99999 [Warning: highly correlated]

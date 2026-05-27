@@ -45,6 +45,10 @@ R-Hit@1cm (높을수록 좋음 / Higher is better)
 | **GRU v3_D** ⭐ | **0.6659** | **+0.0018** | **Focal Loss γ=2.0 추가** |
 | Transformer v5 | 0.6620 | -0.0039 ❌ | Transformer 아키텍처 |
 | Rotation Aug v6 | 0.6608 | -0.0051 ❌ | 4방향 회전 증강 |
+| v9 (Pseudo Labeling) | 0.6582 | -0.0087 | Pseudo 라벨 잔차 분포가 실제 분포와 불일치하여 편향(Bias) 발생 |
+| v10 (L2 Stacking Meta) | 0.5900 | -0.0769 | OOF 예측값 간 상관계수(Corr≈1.0) 과다로 Ridge L2 규제가 가중치를 0으로 붕괴시킴 |
+| v11 (σ_obs Ensemble) | 0.6448 (개별) | -0.0221 | $\sigma_{obs}$를 0.0001~0.002로 다양하게 줘도 GRU 보정 후 Corr>0.995로 동일하게 수렴 (앙상블 실패) |
+| v12 (Adaptive Kalman) | 0.6607 | -0.0062 | 미분가능한 동적 칼만 필터 도입. 모델이 직접 노이즈(Q, R)를 추정하도록 했으나, 고정된 상수 우선순위(Static Prior)를 이기지 못하고 과적합됨 |
 | Multi-step v7 | 0.6635 | -0.0024 ❌ | 자기지도 보조 task |
 | LightGBM | 0.5939 | -0.0025 ❌ | 트리 기반 모델 |
 
