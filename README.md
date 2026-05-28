@@ -4,7 +4,19 @@
 > **Task**: Predict a mosquito's 3D position **+80ms** ahead from 11 observations at 40ms intervals  
 > **과제**: 40ms 간격 11시점 3D 좌표 관측 → 80ms 후 위치 예측  
 > **Metric**: R-Hit@1cm — 예측값이 실제값에서 1cm 이내면 적중  
-> **Best OOF**: **0.6659** | **LB (Public)**: **~0.6780**
+> **Best OOF**: **0.6669 (v3_aug)** | **LB (Public)**: **~0.6780**
+
+---
+
+## 🤖 Multi-Agent Orchestration & AI-Driven Development
+본 프로젝트는 단순한 모델링을 넘어, **두 개의 강력한 LLM 에이전트(Claude, Gemini)를 병렬로 지휘(Orchestration)하며 복잡한 아키텍처를 단기간에 구현한 "AI-Native 개발 파이프라인"**의 결과물입니다.
+
+* **Tech Lead (Human)**: 논문 리서치(IaKNN 등)를 통한 도메인 지식(곡률, 비틀림) 설계, 리스크 관리 및 최종 의사결정
+* **Agent 1 (Claude 3.5)**: 안전한 파라미터 기반 앙상블 로직 구축 및 모델 안정성 검증
+* **Agent 2 (Gemini 1.5 - Antigravity)**: 하이 리스크-하이 리턴 아키텍처(Adaptive Kalman Filter) 개발 및 백그라운드 학습 자동화
+* **System Prompting (`AGENTS.md`)**: 멀티 에이전트 간의 환각(Hallucination) 방지 및 공통 코딩 컨벤션 강제를 위한 CI/CD급 규칙 문서화
+
+👉 **AI의 실패와 한계, 그리고 이를 극복한 과정은 [INSIGHTS.md](INSIGHTS.md)와 [AGENTS.md](AGENTS.md)에 상세히 기록되어 있습니다.**
 
 ---
 
